@@ -1,13 +1,11 @@
 import json
 from datetime import datetime, timedelta
 import pytz
-from openai import AsyncOpenAI
+from groq import AsyncGroq
 from config import config
 
-llm_client = AsyncOpenAI(
-    api_key=config.LLM_API_KEY,
-    base_url=config.LLM_BASE_URL
-)
+# Используем единый клиент Groq с вашим ключом GROQ_API_KEY
+groq_client = AsyncGroq(api_key=config.GROQ_API_KEY)
 
 SYSTEM_PROMPT = """Ты персональный ассистент по учету тренировок. Твоя задача — преобразовать запрос пользователя в строгий JSON.
 
@@ -70,7 +68,7 @@ async def parse_user_request(text: str, existing_exercises: list[str]) -> dict:
         existing_exercises=", ".join(existing_exercises) if existing_exercises else "База пуста"
     )
 
-    response = await llm_client.chat.completions.create(
+    response = await groq_client.chat.completions.create(
         model=config.LLM_MODEL,
         messages=[
             {"role": "system", "content": prompt},
