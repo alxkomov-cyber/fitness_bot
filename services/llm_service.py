@@ -1,13 +1,13 @@
 import json
+import re
 from datetime import datetime, timedelta
 import pytz
 from groq import AsyncGroq
 from config import config
 
-# Используем единый клиент Groq с вашим ключом GROQ_API_KEY
 groq_client = AsyncGroq(api_key=config.GROQ_API_KEY)
 
-SYSTEM_PROMPT = """Ты персональный ассистент по учету тренировок. Твоя задача — преобразовать запрос пользователя в строгий JSON.
+SYSTEM_PROMPT = """Ты персональный ассистент по учету тренировок. Твоя задача — вернуть строго валидный JSON-объект.
 
 Текущая дата и время: {current_datetime} ({day_of_week})
 Существующие в базе упражнения пользователя:
@@ -29,7 +29,7 @@ SYSTEM_PROMPT = """Ты персональный ассистент по уче�
    - "Вчера" -> {yesterday_date}.
    - Для запросов статистики точно определи тип периода: 'day', 'current_week', 'last_week', 'current_month', 'last_month'.
 
-ФОРМАТ JSON ДЛЯ "LOG_WORKOUT":
+СТРУКТУРА JSON ДЛЯ "LOG_WORKOUT":
 {{
   "intent": "LOG_WORKOUT",
   "date": "YYYY-MM-DD",
@@ -38,12 +38,12 @@ SYSTEM_PROMPT = """Ты персональный ассистент по уче�
       "exercise_name": "Каноническое название",
       "value": 40.0,
       "unit": "раз",
-      "notes": "по 5 на каждую ногу"
+      "notes": null
     }}
   ]
 }}
 
-ФОРМАТ JSON ДЛЯ "GET_STATS":
+СТРУКТУРА JSON ДЛЯ "GET_STATS":
 {{
   "intent": "GET_STATS",
   "exercise_name": "Каноническое название",
@@ -51,8 +51,6 @@ SYSTEM_PROMPT = """Ты персональный ассистент по уче�
   "target_date": "YYYY-MM-DD",
   "group_by": "days"
 }}
-
-Возвращай ТОЛЬКО чистый JSON без markdown-кавычек (без ```json).
 """
 
 async def parse_user_request(text: str, existing_exercises: list[str]) -> dict:
@@ -74,15 +72,24 @@ async def parse_user_request(text: str, existing_exercises: list[str]) -> dict:
             {"role": "system", "content": prompt},
             {"role": "user", "content": text}
         ],
-        temperature=0.1
+        temperature=0.1,
+        response_format={"type": "json_object"}
     )
 
-    content = response.choices[0].message.content.strip()
-    if content.startswith("```json"):
-        content = content[7:]
-    if content.startswith("```"):
-        content = content[3:]
-    if content.endswith("```"):
-        content = content[:-3]
+    content = response.choices[0].message.content or ""
 
-    return json.loads(content.strip())
+    # 1. Удаляем блок размышлений <think>...</think>, если модель его сгенерировала
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+
+    # 2. Очищаем от возможных Markdown-оберток (```json)
+    if "```json" in content:
+        content = content.split("```json")[1].split("```")[0].strip()
+    elif "```" in content:
+        content = content.split("```")[1].split("```")[0].strip()
+
+    # 3. Извлекаем чистый JSON от первой { до последней }
+    match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+    if match:
+        content = match.group(0)
+
+    return json.loads(content)
