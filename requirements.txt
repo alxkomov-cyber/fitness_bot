@@ -1,0 +1,9 @@
+aiogram>=3.17.0
+psycopg[binary]>=3.2.0
+SQLAlchemy>=2.0.38
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+openai>=1.60.0
+groq>=0.18.0
+python-dateutil>=2.9.0
+pytz>=2025.1
