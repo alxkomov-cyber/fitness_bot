@@ -7,29 +7,27 @@ from config import config
 
 groq_client = AsyncGroq(api_key=config.GROQ_API_KEY)
 
-SYSTEM_PROMPT = """Ты персональный ассистент по учету тренировок. Твоя задача — вернуть строго валидный JSON-объект.
+SYSTEM_PROMPT = """Ты персональный ассистент по учету тренировок. Твоя задача — вернуть строго JSON-объект без лишнего текста.
 
 Текущая дата и время: {current_datetime} ({day_of_week})
 Существующие в базе упражнения пользователя:
 {existing_exercises}
 
-ПРАВИЛА ИНТЕРПРЕТАЦИИ:
+ПРАВИЛА:
 1. ОПРЕДЕЛИ НАМЕРЕНИЕ (intent):
-   - "LOG_WORKOUT": если пользователь сообщает о выполненном упражнении/подходе.
-   - "GET_STATS": если пользователь спрашивает статистику, результаты или прогресс.
-   - "UNKNOWN": если запрос не по теме спорта.
+   - "LOG_WORKOUT": запись выполненного упражнения/подхода.
+   - "GET_STATS": запрос статистики или прогресса.
+   - "UNKNOWN": если запрос не относится к спорту.
 
-2. НОРМАЛИЗАЦИЯ НАЗВАНИЙ УПРАЖНЕНИЙ:
-   - Приводи названия к каноническому виду в именительном падеже с заглавной буквы ("Отжимания от пола", "Приседания", "Скручивания на пресс").
-   - ВАЖНО: Разделяй модификации! "Отжимания от пола" ≠ "Наклонные отжимания" (от стола/скамьи) ≠ "Отжимания узким хватом".
-   - Если упражнение уже есть в списке существующих — выбери в точности его каноническое имя.
+2. НОРМАЛИЗАЦИЯ УПРАЖНЕНИЙ:
+   - Приводи названия к каноническому виду ("Отжимания от пола", "Приседания", "Скручивания на пресс").
+   - Разделяй модификации: "Отжимания от пола" ≠ "Наклонные отжимания" ≠ "Отжимания узким хватом".
 
 3. ПАРСИНГ ДАТ:
-   - Если дата не названа — ставь сегодняшнюю ({current_date}).
-   - "Вчера" -> {yesterday_date}.
-   - Для запросов статистики точно определи тип периода: 'day', 'current_week', 'last_week', 'current_month', 'last_month'.
+   - Сегодня: {current_date}
+   - Вчера: {yesterday_date}
 
-СТРУКТУРА JSON ДЛЯ "LOG_WORKOUT":
+ФОРМАТ JSON ДЛЯ "LOG_WORKOUT":
 {{
   "intent": "LOG_WORKOUT",
   "date": "YYYY-MM-DD",
@@ -43,13 +41,14 @@ SYSTEM_PROMPT = """Ты персональный ассистент по уче�
   ]
 }}
 
-СТРУКТУРА JSON ДЛЯ "GET_STATS":
+ФОРМАТ JSON ДЛЯ "GET_STATS":
 {{
   "intent": "GET_STATS",
-  "exercise_name": "Каноническое название",
-  "period": "day",
-  "target_date": "YYYY-MM-DD",
-  "group_by": "days"
+  "exercise_name": "Каноническое название" (или null если за все),
+  "period": "day" | "current_week" | "last_week" | "current_month" | "last_month" | "custom",
+  "target_date": "YYYY-MM-DD" (если period='day', иначе null),
+  "start_date": "YYYY-MM-DD" (если period='custom', например для "вчера и сегодня" -> {yesterday_date}),
+  "end_date": "YYYY-MM-DD" (если period='custom', например для "вчера и сегодня" -> {current_date})
 }}
 """
 
@@ -66,28 +65,28 @@ async def parse_user_request(text: str, existing_exercises: list[str]) -> dict:
         existing_exercises=", ".join(existing_exercises) if existing_exercises else "База пуста"
     )
 
+    # Не передаем response_format json_object, чтобы Groq не падал с 400 ошибкой
     response = await groq_client.chat.completions.create(
         model=config.LLM_MODEL,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": text}
         ],
-        temperature=0.1,
-        response_format={"type": "json_object"}
+        temperature=0.1
     )
 
     content = response.choices[0].message.content or ""
 
-    # 1. Удаляем блок размышлений <think>...</think>, если модель его сгенерировала
+    # Удаляем блок размышлений <think>...</think>
     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
 
-    # 2. Очищаем от возможных Markdown-оберток (```json)
+    # Очищаем Markdown
     if "```json" in content:
         content = content.split("```json")[1].split("```")[0].strip()
     elif "```" in content:
         content = content.split("```")[1].split("```")[0].strip()
 
-    # 3. Извлекаем чистый JSON от первой { до последней }
+    # Извлекаем JSON по скобкам {}
     match = re.search(r"\{.*\}", content, flags=re.DOTALL)
     if match:
         content = match.group(0)
