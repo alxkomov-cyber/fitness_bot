@@ -18,7 +18,7 @@ async def cmd_start(message: Message):
         "• *«Отжался от пола 40 раз и присел 30 раз»*\n"
         "• *«Запиши, что вчера сделал скручивания на пресс 50 раз»*\n"
         "• *«Сколько я отжался на прошлой неделе?»*\n"
-        "• *«Прогресс в приседаниях за прошлый месяц»*",
+        "• *«Статистика за вчера и сегодня»*",
         parse_mode="Markdown"
     )
 
@@ -28,9 +28,13 @@ async def process_user_input(message: Message):
     
     # 1. Распознавание речи / текста
     if message.voice:
-        file = await message.bot.get_file(message.voice.file_id)
-        file_bytes = await message.bot.download_file(file.file_path)
-        raw_text = await transcribe_voice(file_bytes.read())
+        try:
+            file = await message.bot.get_file(message.voice.file_id)
+            file_bytes = await message.bot.download_file(file.file_path)
+            raw_text = await transcribe_voice(file_bytes.read())
+        except Exception as e:
+            await wait_msg.edit_text(f"❌ Ошибка распознавания аудио: {e}")
+            return
     else:
         raw_text = message.text
 
@@ -39,7 +43,7 @@ async def process_user_input(message: Message):
     try:
         data = await parse_user_request(raw_text, exercises)
     except Exception as e:
-        await wait_msg.edit_text(f"❌ Ошибка распознавания: {e}")
+        await wait_msg.edit_text(f"❌ Ошибка анализа запроса: {e}")
         return
 
     intent = data.get("intent")
@@ -70,8 +74,12 @@ async def process_user_input(message: Message):
     # 4. Запрос статистики
     elif intent == "GET_STATS":
         period = data.get("period", "day")
+        
         target_d = datetime.strptime(data["target_date"], "%Y-%m-%d").date() if data.get("target_date") else None
-        start_d, end_d, title = get_period_dates(period, target_d)
+        custom_s = datetime.strptime(data["start_date"], "%Y-%m-%d").date() if data.get("start_date") else None
+        custom_e = datetime.strptime(data["end_date"], "%Y-%m-%d").date() if data.get("end_date") else None
+        
+        start_d, end_d, title = get_period_dates(period, target_d, custom_s, custom_e)
         ex_name = data.get("exercise_name")
 
         results = get_workout_stats(start_d, end_d, ex_name)
@@ -97,4 +105,4 @@ async def process_user_input(message: Message):
 
         await wait_msg.edit_text(reply, parse_mode="Markdown")
     else:
-        await wait_msg.edit_text("🤖 Я не понял запрос. Надиктуйте упражнение (например: «Отжался 20 раз») или спросите статистику.")
+        await wait_msg.edit_text("🤖 Я не понял запрос. Надиктуйте упражнение или спросите статистику.")
